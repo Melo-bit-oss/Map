@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>史诗远征：二万五千里长征画卷</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --bg-deep: #0a0806;
+            --card-bg: rgba(22, 18, 14, 0.88);
+            --text-main: #e8e4d9;
+            --gold-light: #e8c97a;
+            --gold-dark: #c4864a;
+            --red-blood: #d32f2f;
+            --glow-gold: 0 0 20px rgba(196, 134, 74, 0.6);
+            --glow-red: 0 0 25px rgba(211, 47, 47, 0.8);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Noto Serif SC', 'STKaiti', serif; background: var(--bg-deep); color: var(--text-main); height: 100vh; overflow: hidden; }
+
+        #map-container { position: absolute; inset: 0; z-index: 1; }
+        #map { width: 100%; height: 100%; background: var(--bg-deep); }
+        
+        /* ═════════════════ 核心黑科技：民国老地图渲染引擎 ═════════════════ */
+        /* 1. 瓦片底图重绘：褪去现代色彩，降低饱和度，注入黄褐色调与高对比度油墨感 */
+        .leaflet-tile-pane { filter: sepia(85%) hue-rotate(-10deg) saturate(0.3) contrast(1.3) brightness(0.85); }
+        
+        /* 2. 纸张颗粒纹理：利用 SVG 实时生成粗糙的旧报纸/牛皮纸杂色蒙版，覆盖全局 */
+        #map-container::before {
+            content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 400;
+            background: url('data:image/svg+xml;utf8,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noise"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noise)" opacity="0.12"/%3E%3C/svg%3E');
+            opacity: 0.8; mix-blend-mode: multiply;
+        }
+
+        /* 3. 岁月侵蚀晕影：地图四周发暗，模拟老画卷边缘 */
+        #map-container::after {
+            content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 401;
+            box-shadow: inset 0 0 150px rgba(30, 15, 5, 0.9);
+        }
+        /* ════════════════════════════════════════════════════════════════ */
+
+        /* 左侧悬浮叙事面板 */
+        #sidebar {
+            position: absolute; left: 20px; top: 20px; bottom: 100px; width: 420px;
+            background: var(--card-bg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(196,134,74,0.3); border-radius: 12px;
+            padding: 30px; display: flex; flex-direction: column; z-index: 1000;
+            box-shadow: 10px 10px 40px rgba(0,0,0,0.8);
+        }
+
+        header h1 { font-size: 28px; color: var(--gold-light); text-shadow: var(--glow-gold); letter-spacing: 2px; margin-bottom: 5px; }
+        .subtitle { font-size: 13px; color: #a09888; letter-spacing: 3px; border-bottom: 1px solid rgba(196,134,74,0.2); padding-bottom: 15px; margin-bottom: 20px; }
+
+        /* 数据面板 */
+        #stats-panel { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+        .stat-box { flex: 1 1 45%; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; }
+        .stat-label { font-size: 12px; color: #8b8070; margin-bottom: 4px; }
+        .stat-value { font-size: 18px; font-weight: bold; color: var(--gold-light); }
+        .stat-value.red { color: var(--red-blood); text-shadow: 0 0 10px rgba(211,47,47,0.5); }
+
+        /* 滚动内容区 */
+        #story-content { flex-grow: 1; overflow-y: auto; padding-right: 10px; scrollbar-width: thin; scrollbar-color: var(--gold-dark) transparent; }
+        #story-content::-webkit-scrollbar { width: 4px; }
+        #story-content::-webkit-scrollbar-thumb { background: var(--gold-dark); border-radius: 2px; }
+
+        #chapter-title { font-size: 22px; color: var(--red-blood); margin-bottom: 15px; font-weight: bold; text-shadow: 0 0 15px rgba(211,47,47,0.4); }
+        #chapter-text { font-size: 15px; line-height: 1.9; color: #d0c8b8; text-align: justify; margin-bottom: 15px; }
+        
+        #image-container { display: none; margin-bottom: 15px; }
+        .history-photo { width: 100%; height: 190px; object-fit: cover; border: 4px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.4); filter: sepia(0.6) grayscale(0.4) contrast(1.1); margin-bottom: 10px; border-radius: 2px; animation: fadeIn 0.8s ease;}
+
+        #diary-box { padding: 15px; background: rgba(196,134,74,0.1); border-left: 3px solid var(--gold-dark); border-radius: 4px; display: none; animation: fadeIn 0.8s ease; margin-bottom: 20px;}
+        #diary-author { font-size: 13px; color: var(--gold-light); font-weight: bold; margin-bottom: 6px; }
+        #diary-text { font-size: 14px; font-style: italic; color: #a09888; line-height: 1.6; }
+
+        #chart-container { width: 100%; height: 180px; display: none; animation: fadeIn 0.8s ease; margin-bottom: 10px;}
+
+        /* 底部时间轴控制 */
+        #bottom-bar {
+            position: absolute; bottom: 20px; left: 20px; right: 20px; height: 60px;
+            background: var(--card-bg); backdrop-filter: blur(16px);
+            border: 1px solid rgba(196,134,74,0.3); border-radius: 12px;
+            display: flex; align-items: center; padding: 0 30px; z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+
+        .timeline-container { flex-grow: 1; display: flex; align-items: center; position: relative; margin-right: 30px; }
+        .timeline-track { position: absolute; width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; z-index: 1; }
+        .timeline-fill { position: absolute; height: 4px; background: linear-gradient(90deg, var(--gold-dark), var(--red-blood)); border-radius: 2px; z-index: 2; transition: width 0.5s ease; box-shadow: var(--glow-red); }
+        .timeline-nodes { position: relative; width: 100%; display: flex; justify-content: space-between; z-index: 3; }
+        .node { width: 14px; height: 14px; border-radius: 50%; background: #222; border: 2px solid rgba(255,255,255,0.3); cursor: pointer; transition: all 0.3s; }
+        .node.active { background: var(--red-blood); border-color: #fff; box-shadow: var(--glow-red); transform: scale(1.5); }
+        .node.done { background: var(--gold-dark); border-color: var(--gold-light); }
+
+        #next-btn {
+            padding: 10px 25px; font-size: 15px; font-weight: bold; letter-spacing: 2px;
+            background: rgba(196,134,74,0.2); color: var(--gold-light);
+            border: 1px solid var(--gold-dark); border-radius: 6px; cursor: pointer;
+            transition: all 0.3s;
+        }
+        #next-btn:hover { background: var(--gold-dark); color: #000; box-shadow: var(--glow-gold); }
+
+        /* 特效动画 */
+        .route-draw { stroke-dasharray: 2000; stroke-dashoffset: 2000; animation: drawLine 2.5s ease-out forwards; }
+        @keyframes drawLine { to { stroke-dashoffset: 0; } }
+
+        .flash-blood { position: absolute; inset: 0; z-index: 500; pointer-events: none; background: radial-gradient(circle, rgba(211,47,47,0.3) 0%, transparent 70%); animation: bloodPulse 1.5s ease-out forwards; }
+        @keyframes bloodPulse { 0% {opacity: 0;} 30% {opacity: 1;} 100% {opacity: 0;} }
+
+        .frost-overlay { position: absolute; inset: 0; z-index: 500; pointer-events: none; box-shadow: inset 0 0 150px rgba(180,210,240,0.2); animation: fadeIn 1s forwards; display: none; }
+        .snowflake { position: absolute; z-index: 501; color: #fff; pointer-events: none; text-shadow: 0 0 5px #fff; animation: fall linear forwards; }
+        @keyframes fall { 0% { transform: translateY(-20px) rotate(0deg); opacity: 0; } 10% { opacity: 1; } 90% { opacity: 0.8; } 100% { transform: translateY(100vh) rotate(360deg); opacity: 0; } }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* 地图图元样式 */
+        .hex-marker div { width: 36px; height: 36px; background: rgba(20,10,10,0.9); border: 2px solid var(--gold-dark); clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--gold-light); font-weight: 900; font-size: 10px; box-shadow: var(--glow-gold); }
+        .battle-pulse div { width: 16px; height: 16px; background: var(--red-blood); border-radius: 50%; box-shadow: var(--glow-red); animation: battlePulseIcon 1.5s infinite alternate; }
+        @keyframes battlePulseIcon { from { transform: scale(0.8); } to { transform: scale(1.5); } }
+
+        /* 自定义高德地图自带控件美化 */
+        .leaflet-control-zoom { border: 1px solid var(--gold-dark) !important; box-shadow: var(--glow-gold) !important; }
+        .leaflet-control-zoom-in, .leaflet-control-zoom-out { background-color: var(--card-bg) !important; color: var(--gold-light) !important; border-bottom: 1px solid rgba(196,134,74,0.3) !important; }
+        .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover { background-color: var(--gold-dark) !important; color: #000 !important; }
+
+        #legend { position: absolute; top: 20px; right: 20px; background: var(--card-bg); backdrop-filter: blur(10px); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); z-index: 1000; font-size: 12px; color: #a09888; }
+        .leg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .leg-line { width: 20px; height: 3px; background: var(--red-blood); }
+        .leg-battle { width: 10px; height: 10px; border-radius: 50%; background: var(--red-blood); box-shadow: 0 0 5px red;}
+    </style>
+</head>
+<body>
+
+    <div id="map-container">
+        <div id="map"></div>
+        <div id="frost-layer" class="frost-overlay"></div>
+    </div>
+
+    <div id="legend">
+        <div style="color:var(--gold-light); font-weight:bold; margin-bottom:8px; font-size:14px;">战略沙盘图例</div>
+        <div class="leg-row"><span class="leg-line"></span> 红军行军轨迹</div>
+        <div class="leg-row"><div class="leg-battle"></div> 战役爆发点</div>
+        <div class="leg-row"><div style="width:12px; height:12px; border:1px solid #d4a574; background:#222; clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);"></div> 实时兵力驻点</div>
+    </div>
+
+    <div id="sidebar">
+        <header>
+            <h1>史诗远征</h1>
+            <div class="subtitle">二万五千里的时空数据推演</div>
+        </header>
+
+        <div id="stats-panel">
+            <div class="stat-box"><div class="stat-label">当前时间</div><div class="stat-value" id="s-time">1934年10月</div></div>
+            <div class="stat-box"><div class="stat-label">地理位置</div><div class="stat-value" id="s-loc">江西瑞金</div></div>
+            <div class="stat-box"><div class="stat-label">红军兵力</div><div class="stat-value" id="s-army">86,000人</div></div>
+            <div class="stat-box"><div class="stat-label">行军环境</div><div class="stat-value red" id="s-env">突围出发</div></div>
+        </div>
+
+        <div id="story-content">
+            <div id="chapter-title">序章：战略转移</div>
+            <div id="chapter-text">点击右下角“开启征程”按钮，伴随中央红军踏上长征的空间纪实。</div>
+            
+            <div id="image-container"></div>
+            <div id="chart-container"><canvas id="dynChart"></canvas></div>
+
+            <div id="diary-box">
+                <div id="diary-author"></div>
+                <div id="diary-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="bottom-bar">
+        <div class="timeline-container">
+            <div class="timeline-track"></div>
+            <div class="timeline-fill" id="tl-fill"></div>
+            <div class="timeline-nodes" id="tl-nodes"></div>
+        </div>
+        <button id="next-btn" onclick="nextChapter()">开启征程</button>
+    </div>
+
+<script>
+// ==================== 坐标体系与数据驱动配置 ====================
+const C = {
+    ruijin: [25.88, 116.03], xiangjiang: [25.96, 110.98], zunyi: [27.69, 106.92], 
+    chishui: [28.32, 106.15], luding: [29.91, 102.23], xueshan: [31.50, 102.50], wuqi: [36.92, 108.18]
+};
+
+const routeSegments = [
+    [C.ruijin, C.xiangjiang],
+    [C.xiangjiang, C.zunyi],
+    [C.zunyi, [27.5, 106.5]],
+    [[27.5, 106.5], C.chishui, [27.8, 105.0], C.zunyi],
+    [C.zunyi, [26.6, 106.7], [25.5, 104.5], C.luding],
+    [C.luding, C.xueshan],
+    [C.xueshan, [34.0, 104.5], C.wuqi]
+];
+
+const chapters = [
+    {
+        title: "第一卷 · 挥泪别苏区",
+        text: "第五次反“围剿”失败，苏区中央局被迫决定战略转移。十万大军趁着夜色渡过于都河，告别了瑞金根据地。此时的红军兵力达到了长征途中的最高峰。",
+        stats: { time: "1934年10月", loc: "江西瑞金", army: "86,000人", env: "夜间突围" },
+        diary: { author: "红军小战士的回忆", text: "“老乡们把家里仅有的鸡蛋塞进我们手里，拉着我们的衣角哭。政委说，这只是暂时的转移，我们一定会打回来。”" },
+        map: { center: C.ruijin, zoom: 11 }, 
+        effect: null
+    },
+    {
+        title: "第二卷 · 血染湘江",
+        text: "敌军布下第四道封锁线。红军在湘江两岸遭到数十万敌军和飞机狂轰滥炸。由于过度负重行军缓慢，为掩护纵队过江，后卫部队成建制战死。江水被鲜血染红，兵力发生断崖式下跌。",
+        stats: { time: "1934年11月", loc: "广西全州", army: "30,000人", env: "惨烈血战" },
+        diary: { author: "红三十四师 绝笔", text: "“江水完全变成了红色。天上的飞机像乌鸦一样往下扔炸弹。师长陈树湘绞断自己的肠子壮烈牺牲。三年不饮湘江水，十年不食湘江鱼。”" },
+        map: { center: C.xiangjiang, zoom: 11 }, 
+        images: ["https://gd-hbimg.huaban.com/e03c31f39bd5d6df7d0aac058505734db3eb7431471b9-E1CDR4_fw658"], 
+        effect: 'blood',
+        chart: { type: 'bar', label: '兵力变化(万人)', data: [8.6, 6.4, 3.0], labels: ['出发', '突破前三道', '湘江后'], colors: ['#d4a574', '#c4864a', '#d32f2f'] }
+    },
+    {
+        title: "第三卷 · 遵义的曙光",
+        text: "惨痛失利让全军觉醒。红军果断放弃原定计划，转向兵力空虚的贵州，攻克遵义。毛泽东重新回到领导核心，红军迎来了生死攸关的转折点。",
+        stats: { time: "1935年1月", loc: "贵州遵义", army: "30,000人", env: "士气重振" },
+        diary: { author: "会议决议记录", text: "“会议增选毛泽东同志为政治局常委。从此，红军告别了盲目挨打的噩梦。”" },
+        map: { center: C.zunyi, zoom: 11 }, 
+        images: ["https://ts1.tc.mm.bing.net/th/id/R-C.3f6a38d11824daf81fdd3210d40fd443?rik=KIe9ilqzD8Cj4w&riu=http%3a%2f%2fszb.eyesnews.cn%2fpc%2fpic%2f202501%2f02%2ffe061108-8e66-4a40-92d5-83114edca206.jpg.1&ehk=1x76sbFQyDAXdIOKYNiyaPWUq4Uerc4QPnWZwaaw5QE%3d&risl=&pid=ImgRaw&r=0"], 
+        effect: null
+    },
+    {
+        title: "第四卷 · 四渡赤水出奇兵",
+        text: "面对十倍于己的敌军，毛泽东指挥红军在赤水河流域上演了绝妙的战术漫游。四次跨越赤水，声东击西，将四十万敌军彻底玩弄于股掌之间。",
+        stats: { time: "1935年3月", loc: "川黔交界", army: "30,000人", env: "机动穿插" },
+        diary: { author: "国民党追剿将领日记", text: "“共军行踪完全无法捉摸。昨天以为他们要过长江，今天竟杀个回马枪重夺遵义。我们在山里被牵着鼻子转圈，崩溃了。”" },
+        map: { center: C.chishui, zoom: 10 },
+        images: ["https://images.unsplash.com/photo-1437482078695-73f5ca6c96e2?auto=format&fit=crop&w=800&q=80"],
+        effect: null
+    },
+    {
+        title: "第五卷 · 铁索寒桥大渡河",
+        text: "前有湍急天险大渡河，后有追兵。22名突击队员冒着密集的枪林弹雨，攀踏着光秃秃、悬空的铁索，强行夺下泸定桥，红军再次死里逃生。",
+        stats: { time: "1935年5月", loc: "四川泸定", army: "20,000人", env: "水流湍急" },
+        diary: { author: "飞夺泸定桥突击队员", text: "“桥板全被抽光了，底下是水流急得像刀子一样的大渡河。对面机枪扫过来，我们咬着牙顺着铁链往前爬。”" },
+        map: { center: C.luding, zoom: 12 }, 
+        images: ["https://thf.bing.com/th/id/OIP.DmgKfdWnGeIyg-aGZn6jOgHaD6?w=305&h=180&c=7&r=0&o=7&cb=thfc1falcon&dpr=1.7&pid=1.7&rm=3"],
+        effect: 'blood'
+    },
+    {
+        title: "第六卷 · 冰雪与泥沼",
+        text: "最大的敌人变成了险恶的自然。红军翻越终年积雪的夹金山，随后踏入暗流涌动的松潘草地。饥寒交迫，泥沼吞噬了无数疲惫的身躯。",
+        stats: { time: "1935年8月", loc: "川西高原", army: "10,000余人", env: "极寒缺氧 (-20℃)" },
+        diary: { author: "幸存女战士的日记", text: "“草地连一棵树都没有。干粮吃完后，我们开始煮皮带。走着走着，前面的同志倒下去，就再也没有站起来。”" },
+        map: { center: C.xueshan, zoom: 9 },
+        images: [
+            "https://k.sinaimg.cn/www/dy/slidenews/1_img/2016_42/45272_741208_404182.jpg/w640slw.jpg", 
+            "https://ts1.tc.mm.bing.net/th/id/R-C.a8da0245c6299c87e82f3bd90d45e03f?rik=Hdty0bvjPk2XAQ&riu=http%3a%2f%2fn.sinaimg.cn%2fsinacn20191128ac%2f500%2fw1200h900%2f20191128%2f6fa4-iixntzz9872502.jpg&ehk=Xv8Hz6snb1F5LXf3oyQFZ7FfMjRQO4MDPafnfvYxCmE%3d&risl=&pid=ImgRaw&r=0"
+        ], 
+        effect: 'frost',
+        chart: { type: 'line', label: '海拔飙升(米)', data: [850, 1500, 4114, 3500], labels: ['遵义', '大渡河', '夹金山', '草地'], colors: '#00e5ff' }
+    },
+    {
+        title: "第七卷 · 丰碑长存",
+        text: "纵横十一个省，长驱二万五千里。中央红军终于到达陕北吴起镇。这支百折不挠的队伍，在黄土高原的窑洞里，迎来了革命重生的曙光。",
+        stats: { time: "1935年10月", loc: "陕北吴起", army: "7,000余人", env: "黄土高原" },
+        diary: { author: "毛泽东《七律·长征》", text: "“红军不怕远征难，万水千山只等闲。五岭逶迤腾细浪，乌蒙磅礴走泥丸。”" },
+        map: { center: C.wuqi, zoom: 11 }, 
+        images: ["https://x0.ifengimg.com/res/2019/32D6E937B82CA8A02150E7F5BD4AFA78C485F524_size258_w1920_h1080.jpeg"], 
+        effect: null
+    }
+];
+
+// ==================== 核心初始化 (完全释放鼠标缩放与拖拽) ====================
+let currentStep = -1;
+let chartInstance = null;
+
+const map = L.map('map', { zoomControl: true, attributionControl: false, scrollWheelZoom: true });
+
+// 恢复具有丰富行政标签的高精度图层，依靠滤镜做旧
+L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    subdomains: '1234', maxZoom: 18, minZoom: 4
+}).addTo(map);
+
+const routeLayerGroup = L.layerGroup().addTo(map);
+
+const hexIcon = (txt) => L.divIcon({ className: 'hex-marker', html: `<div><span>兵力</span><span>${txt}</span></div>`, iconSize: [44,44], iconAnchor: [22,22] });
+const battleIcon = L.divIcon({ className: 'battle-pulse', html: '<div></div>', iconSize: [16,16], iconAnchor: [8,8] });
+
+L.marker(C.ruijin, {icon: hexIcon('86K')}).addTo(map).bindPopup("<b>瑞金</b><br>长征始发地，最高兵力峰值。");
+L.marker(C.xiangjiang, {icon: battleIcon}).addTo(map).bindPopup("<b>湘江战役</b><br>最惨烈的突围战。");
+L.marker(C.chishui, {icon: battleIcon}).addTo(map).bindPopup("<b>四渡赤水</b><br>神级机动作战。");
+L.marker(C.luding, {icon: battleIcon}).addTo(map).bindPopup("<b>飞夺泸定桥</b><br>大渡河天险强渡。");
+L.marker(C.wuqi, {icon: hexIcon('7K')}).addTo(map).bindPopup("<b>吴起镇</b><br>陕北胜利会师地。");
+
+const tlNodes = document.getElementById('tl-nodes');
+chapters.forEach((_, i) => {
+    let node = document.createElement('div');
+    node.className = 'node';
+    node.onclick = () => jumpTo(i);
+    tlNodes.appendChild(node);
+});
+
+// ==================== 运镜与交互中枢 ====================
+function jumpTo(step) {
+    if(step === currentStep) return;
+    currentStep = step;
+    const c = chapters[step];
+
+    document.getElementById('chapter-title').innerText = c.title;
+    document.getElementById('chapter-text').innerText = c.text;
+    document.getElementById('s-time').innerText = c.stats.time;
+    document.getElementById('s-loc').innerText = c.stats.loc;
+    document.getElementById('s-army').innerText = c.stats.army;
+    document.getElementById('s-env').innerText = c.stats.env;
+    
+    const diaryBox = document.getElementById('diary-box');
+    if(c.diary) {
+        document.getElementById('diary-author').innerText = c.diary.author;
+        document.getElementById('diary-text').innerText = c.diary.text;
+        diaryBox.style.display = 'block';
+    } else {
+        diaryBox.style.display = 'none';
+    }
+
+    const imgContainer = document.getElementById('image-container');
+    imgContainer.innerHTML = ''; 
+    if(c.images && c.images.length > 0) {
+        c.images.forEach(url => {
+            let imgElement = document.createElement('img');
+            imgElement.className = 'history-photo';
+            imgElement.src = url;
+            imgContainer.appendChild(imgElement);
+        });
+        imgContainer.style.display = 'block';
+    } else {
+        imgContainer.style.display = 'none';
+    }
+
+    const nodes = document.querySelectorAll('.node');
+    nodes.forEach((n, i) => {
+        n.className = 'node';
+        if(i < step) n.classList.add('done');
+        if(i === step) n.classList.add('active');
+    });
+    document.getElementById('tl-fill').style.width = (step / (chapters.length - 1)) * 100 + '%';
+    document.getElementById('next-btn').innerText = step === chapters.length - 1 ? "重新开始" : "下一段征程";
+
+    map.flyTo(c.map.center, c.map.zoom, { duration: 1.6, easeLinearity: 0.25 });
+
+    routeLayerGroup.clearLayers();
+    for(let i=0; i<step; i++) {
+        L.polyline(routeSegments[i], { color: '#d32f2f', weight: 3, opacity: 0.3, dashArray: '6,6' }).addTo(routeLayerGroup);
+    }
+    if(step >= 0) {
+        L.polyline(routeSegments[step], { color: '#d32f2f', weight: 6, opacity: 0.9, className: 'route-draw' }).addTo(routeLayerGroup);
+    }
+
+    document.getElementById('frost-layer').style.display = 'none';
+    if(c.effect === 'blood') {
+        let flash = document.createElement('div');
+        flash.className = 'flash-blood';
+        document.getElementById('map-container').appendChild(flash);
+        setTimeout(() => flash.remove(), 1600);
+    } else if (c.effect === 'frost') {
+        document.getElementById('frost-layer').style.display = 'block';
+        createSnowflakes();
+    }
+
+    const chartBox = document.getElementById('chart-container');
+    if(c.chart) {
+        chartBox.style.display = 'block';
+        if(chartInstance) chartInstance.destroy();
+        const ctx = document.getElementById('dynChart').getContext('2d');
+        chartInstance = new Chart(ctx, {
+            type: c.chart.type,
+            data: {
+                labels: c.chart.labels,
+                datasets: [{ label: c.chart.label, data: c.chart.data, backgroundColor: c.chart.colors, borderColor: c.chart.type==='line'?c.chart.colors:undefined, fill: true, tension: 0.3 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend:{display:false} }, scales: { y: { ticks:{color:'#a09888'}, grid:{color:'rgba(255,255,255,0.1)'} }, x: { ticks:{color:'#a09888'}, grid:{display:false} } } }
+        });
+    } else {
+        chartBox.style.display = 'none';
+    }
+}
+
+function nextChapter() {
+    let next = currentStep + 1;
+    if (next >= chapters.length) next = 0;
+    jumpTo(next);
+}
+
+function createSnowflakes() {
+    for(let i=0; i<40; i++) {
+        setTimeout(() => {
+            if(document.getElementById('frost-layer').style.display === 'none') return;
+            let s = document.createElement('div');
+            s.className = 'snowflake';
+            s.innerHTML = '❄';
+            s.style.left = Math.random() * 100 + 'vw';
+            s.style.fontSize = (Math.random() * 10 + 10) + 'px';
+            s.style.animationDuration = (Math.random() * 3 + 3) + 's';
+            document.getElementById('map-container').appendChild(s);
+            setTimeout(() => s.remove(), 6000);
+        }, i * 100);
+    }
+}
+
+map.setView([32, 110], 5);
+
+</script>
+</body>
+</html>
